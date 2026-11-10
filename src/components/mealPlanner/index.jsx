@@ -25,6 +25,23 @@ const initialRecipes = [
 const readStorage = (key, fallback) => {
     try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : fallback; } catch { return fallback; }
 };
+const canUseStorage = () => {
+    try {
+        const probeKey = `tableful-storage-probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        localStorage.setItem(probeKey, "1");
+        localStorage.removeItem(probeKey);
+        return true;
+    } catch {
+        return false;
+    }
+};
+const readCheckedByWeek = () => {
+    const value = readStorage(checkedKey, {});
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value)
+        .filter(([week, items]) => /^\d{4}-\d{2}-\d{2}$/.test(week) && Array.isArray(items))
+        .map(([week, items]) => [week, items.filter((item) => typeof item === "string").map((item) => item.toLowerCase())]));
+};
 const isoDate = (date) => [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
 const fromISO = (value) => new Date(value + "T12:00:00");
 const shiftDate = (value, amount) => { const date = fromISO(value); date.setDate(date.getDate() + amount); return isoDate(date); };
@@ -49,17 +66,27 @@ const MealPlanner = () => {
     const [selectedDate, setSelectedDate] = useState(() => isoDate(new Date()));
     const [recipes, setRecipes] = useState(() => readStorage(recipesKey, initialRecipes));
     const [plan, setPlan] = useState(() => readStorage(planKey, buildSamplePlan()));
-    const [checked, setChecked] = useState(() => readStorage(checkedKey, []));
+    const [checkedByWeek, setCheckedByWeek] = useState(readCheckedByWeek);
+    const [storageAvailable, setStorageAvailable] = useState(canUseStorage);
     const [filter, setFilter] = useState("All recipes");
     const [query, setQuery] = useState("");
     const [isAdding, setIsAdding] = useState(false);
     const [pendingDelete, setPendingDelete] = useState(null);
 
-    useEffect(() => localStorage.setItem(recipesKey, JSON.stringify(recipes)), [recipes]);
-    useEffect(() => localStorage.setItem(planKey, JSON.stringify(plan)), [plan]);
-    useEffect(() => localStorage.setItem(checkedKey, JSON.stringify(checked)), [checked]);
+    useEffect(() => {
+        if (!storageAvailable) return;
+        try {
+            localStorage.setItem(recipesKey, JSON.stringify(recipes));
+            localStorage.setItem(planKey, JSON.stringify(plan));
+            localStorage.setItem(checkedKey, JSON.stringify(checkedByWeek));
+        } catch {
+            // Keep the planner usable in memory if browser storage becomes unavailable.
+            setStorageAvailable(false);
+        }
+    }, [recipes, plan, checkedByWeek, storageAvailable]);
 
     const weekStart = mondayOf(selectedDate);
+    const checked = checkedByWeek[weekStart] ?? [];
     const weekDates = Array.from({ length: 7 }, (_, index) => shiftDate(weekStart, index));
     const selectedPlan = plan[selectedDate] ?? {};
     const recipeById = useMemo(() => new Map(recipes.map((recipe) => [recipe.id, recipe])), [recipes]);
@@ -67,7 +94,7 @@ const MealPlanner = () => {
     const weekMeals = weekDates.flatMap((date) => slotNames.map((slot) => recipeById.get(plan[date]?.[slot])).filter(Boolean));
     const totalCalories = selectedMeals.reduce((total, item) => total + item.recipe.calories, 0);
     const ingredients = [...new Map(weekMeals.flatMap((recipe) => recipe.ingredients).map((name) => [name.toLocaleLowerCase(), name])).values()].sort((a, b) => a.localeCompare(b));
-    const filteredRecipes = recipes.filter((recipe) => (filter === "All recipes" || recipe.type.toLowerCase() === filter.toLowerCase()) && recipe.name.toLowerCase().includes(query.toLowerCase()));
+    const filteredRecipes = recipes.filter((recipe) => (filter === "All recipes" || recipe.type.toLowerCase() === filter.toLowerCase()) && `${recipe.name} ${recipe.ingredients.join(" ")}`.toLowerCase().includes(query.toLowerCase()));
     const dateLabel = `${formatDay(weekDates[0], { month: "short", day: "numeric" })} – ${formatDay(weekDates[6], { month: "short", day: "numeric" })}`;
 
     const changeMeal = (slot, recipeId) => setPlan((current) => ({ ...current, [selectedDate]: { ...current[selectedDate], [slot]: recipeId } }));
@@ -94,7 +121,14 @@ const MealPlanner = () => {
         setPlan((current) => Object.fromEntries(Object.entries(current).map(([date, slots]) => [date, Object.fromEntries(Object.entries(slots).map(([slot, recipeId]) => [slot, recipeId === pendingDelete.id ? "" : recipeId]))])));
         setPendingDelete(null);
     };
-    const toggleIngredient = (ingredient) => setChecked((current) => current.includes(ingredient.toLowerCase()) ? current.filter((item) => item !== ingredient.toLowerCase()) : [...current, ingredient.toLowerCase()]);
+    const toggleIngredient = (ingredient) => setCheckedByWeek((current) => {
+        const weekItems = current[weekStart] ?? [];
+        const normalizedIngredient = ingredient.toLowerCase();
+        const nextItems = weekItems.includes(normalizedIngredient)
+            ? weekItems.filter((item) => item !== normalizedIngredient)
+            : [...weekItems, normalizedIngredient];
+        return { ...current, [weekStart]: nextItems };
+    });
 
     return <div className={styles.mealPlanner}>
         <section className={styles.hero}>
@@ -102,11 +136,11 @@ const MealPlanner = () => {
             <div className={styles.heroNote}><div className={styles.notePlate}><span>✳</span></div><div><span>THIS WEEK'S NOTE</span><strong>Good food, no fuss.</strong><small>Simple ideas for the days ahead.</small></div><FiEdit3 aria-hidden="true" /></div>
         </section>
 
-        <div className={styles.summaryRow} aria-label="This week's plan summary"><article><span className={styles.summaryIcon}><FiCheck aria-hidden="true" /></span><div><strong>{weekMeals.length}</strong><small>meals planned</small></div></article><article><span className={styles.summaryIcon}><FiSun aria-hidden="true" /></span><div><strong>{new Set(weekDates.filter((date) => slotNames.some((slot) => plan[date]?.[slot])).map((date) => date)).size}<small> / 7</small></strong><small>days with a plan</small></div></article><article><span className={styles.summaryIcon}><FiShoppingBag aria-hidden="true" /></span><div><strong>{ingredients.length}</strong><small>shopping list items</small></div></article><span className={styles.localBadge}>SAVED ON THIS DEVICE</span></div>
+        <div className={styles.summaryRow} aria-label="This week's plan summary"><article><span className={styles.summaryIcon}><FiCheck aria-hidden="true" /></span><div><strong>{weekMeals.length}</strong><small>meals planned</small></div></article><article><span className={styles.summaryIcon}><FiSun aria-hidden="true" /></span><div><strong>{new Set(weekDates.filter((date) => slotNames.some((slot) => plan[date]?.[slot])).map((date) => date)).size}<small> / 7</small></strong><small>days with a plan</small></div></article><article><span className={styles.summaryIcon}><FiShoppingBag aria-hidden="true" /></span><div><strong>{ingredients.length}</strong><small>shopping list items</small></div></article><span className={styles.localBadge}>{storageAvailable ? "SAVED ON THIS DEVICE" : "SESSION ONLY · STORAGE OFF"}</span></div>
 
         <div className={styles.mainGrid}>
             <section className={styles.plannerCard} id="week-plan" aria-labelledby="planner-title">
-                <div className={styles.weekHeading}><div><span className={styles.sectionKicker}>YOUR WEEKLY MENU</span><h2 id="planner-title">A plan that feels good</h2></div><div className={styles.weekControls}><button type="button" aria-label="Previous week" onClick={() => setSelectedDate((date) => shiftDate(date, -7))}><FiArrowLeft aria-hidden="true" /></button><button type="button" className={styles.weekLabel} onClick={() => setSelectedDate(isoDate(new Date()))}>{dateLabel}<small>THIS WEEK</small></button><button type="button" aria-label="Next week" onClick={() => setSelectedDate((date) => shiftDate(date, 7))}><FiArrowRight aria-hidden="true" /></button></div></div>
+                <div className={styles.weekHeading}><div><span className={styles.sectionKicker}>YOUR WEEKLY MENU</span><h2 id="planner-title">A plan that feels good</h2></div><div className={styles.weekControls}><button type="button" aria-label="Previous week" onClick={() => setSelectedDate((date) => shiftDate(date, -7))}><FiArrowLeft aria-hidden="true" /></button><button type="button" className={styles.weekLabel} onClick={() => setSelectedDate(isoDate(new Date()))}>{dateLabel}<small>{weekStart === mondayOf(isoDate(new Date())) ? "THIS WEEK" : "GO TO THIS WEEK"}</small></button><button type="button" aria-label="Next week" onClick={() => setSelectedDate((date) => shiftDate(date, 7))}><FiArrowRight aria-hidden="true" /></button></div></div>
                 <div className={styles.dayStrip} aria-label="Choose a day">{weekDates.map((date) => <button key={date} type="button" className={date === selectedDate ? styles.activeDay : ""} aria-pressed={date === selectedDate} onClick={() => setSelectedDate(date)}><span>{formatDay(date, { weekday: "short" })}</span><strong>{formatDay(date, { day: "numeric" })}</strong><i>{slotNames.filter((slot) => plan[date]?.[slot]).length} meals</i></button>)}</div>
                 <div className={styles.daySummary}><div><h3>{formatDay(selectedDate, { weekday: "long", month: "long", day: "numeric" })}</h3><p>{selectedMeals.length ? `${selectedMeals.length} meal ideas ready for today` : "Start with one meal you are looking forward to."}</p></div><div className={styles.caloriePill}><strong>{totalCalories.toLocaleString("en-US")}</strong><span>planned kcal</span></div></div>
                 <div className={styles.mealSlots}>{slotNames.map((slot) => {

@@ -12,8 +12,8 @@ Tableful helps map meal ideas across a week and turns the planned recipes into a
 - Browse the current week and move between weeks or individual days.
 - Choose breakfast, lunch, dinner, and snack ideas for each day.
 - See the selected day's estimated calories and a count of planned meals.
-- Build a weekly shopping list from recipe ingredients and check items off.
-- Search and filter the recipe collection by meal type.
+- Build a weekly shopping list from recipe ingredients and keep checked items separate for each week.
+- Search recipe names and ingredients, then filter the collection by meal type.
 - Create recipes with ingredients, meal type, preparation time, and calorie estimates.
 - Remove a planned meal or recipe with a confirmation dialog.
 
@@ -27,7 +27,7 @@ Meal plans, recipes, and checked shopping items are stored in local storage in t
 
 ## Run and check locally
 
-Install dependencies with `npm install`, then start the Vite development server with `npm run dev`. Run `npm run lint` for ESLint and `npm run build` for a production build. Run `npm run deploy` to publish the `dist` folder to the `gh-pages` branch.
+Install dependencies with `npm ci`, then start the Vite development server with `npm run dev`. Run `npm run lint` for ESLint and `npm run build` for a production build. Run `npm run deploy` to publish the `dist` folder to the `gh-pages` branch.
 
 ## Future improvements
 
